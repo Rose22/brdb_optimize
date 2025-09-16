@@ -114,6 +114,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             /*
              * optimize: freeze all wheels
+             * made by: (still figuring that out..)
              */
             // Entity_chunk loads entities and their entity data
             let entities = db.entity_chunk(chunk.index)?;
@@ -135,6 +136,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             /*
              * optimize: disable cast shadows
+             * made by: sliced
              */
             if chunk.num_components > 0 {
                 // Iterate all the components in the chunk
