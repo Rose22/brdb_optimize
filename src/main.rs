@@ -38,10 +38,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut soa = EntityChunkSoA::default();
         for mut e in entities.into_iter() {
             let ent_type = e.data.get_schema_struct().unwrap().0;
-            if ent_type.starts_with("Entity_Wheel") {
+            if ent_type.starts_with("Entity_Wheel") || ent_type.starts_with("Entity_Ball") {
                 e.frozen = true;
                 println!("freezing entity {} of type {ent_type}", e.id.unwrap());
+            } else {
+                println!("skipped freezing entity {} of type {ent_type}", e.id.unwrap());
             }
+
             soa.add_entity(&global_data, &e, e.id.unwrap() as u32);
         }
 
@@ -193,4 +196,5 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
+
 
