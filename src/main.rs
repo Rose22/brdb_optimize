@@ -5,6 +5,7 @@
  * - disabling castshadows on all lights everywhere
  * - TODO: stripping revisions to only the last 600 (keeps filesize small)
  *     (600 revisions = roughly 2 days assuming 5 minute autosave interval)
+ * - forces radius and brightness of all lights down to a reasonable limit
  */
 
 use std::{
@@ -40,6 +41,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ------------------
     // Freeze all entities that are known to cause lag
     // ------------------
+    println!("---SEP---");
     println!("freezing entities..");
 
     let mut entity_chunk_files = vec![];
@@ -51,9 +53,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let ent_type = e.data.get_schema_struct().unwrap().0;
             if ent_type.starts_with("Entity_Wheel") || ent_type.starts_with("Entity_Ball") {
                 e.frozen = true;
-                println!("freezing entity {} of type {ent_type}", e.id.unwrap());
-            } else {
-                // println!("skipped freezing entity {} of type {ent_type}", e.id.unwrap());
+                println!("[ENTITY] freezing entity {} of type {ent_type}..", e.id.unwrap());
             }
 
             soa.add_entity(&global_data, &e, e.id.unwrap() as u32);
@@ -80,9 +80,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )]);
 
     // ------------------
-    // Disable shadows
+    // Optimize all lights
     // ------------------
-    println!("disabling cast shadow property across all lights..");
+    println!("---SEP---");
+    println!("optimizing lights..");
     let mut grid_ids = vec![1];
 
     // Collect dynamic brick grid IDs
@@ -115,8 +116,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut num_chunk_modified = 0;
 
             for mut s in components {
-                if s.prop("bCastShadows")
-                    .is_ok_and(|v| v.as_brdb_bool().unwrap_or_default())
+                // if it is a light
+                if s.prop("bCastShadows").is_ok()
                 {
                     /*
                     println!(
@@ -125,7 +126,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         s.get_name()
                     );
                     */
-                    s.set_prop("bCastShadows", BrdbValue::Bool(false))?;
+
+                    // force light radius down to 500
+                    let mut s_radius = s.prop("Radius")?.as_brdb_f32()?;
+                    if s_radius > 5000.0 {
+                        // for some reason the game stores radiuses as thousands..
+                        s_radius = 5000.0;
+                        println!("[grid:{grid}::chunk{}] radius exceeds 500, forcing down..", *index);
+                    }
+                    // force light brightness down to 500
+                    let mut s_brightness = s.prop("Brightness")?.as_brdb_f32()?;
+                    if s_brightness > 400.0 {
+                        s_brightness = 400.0;
+                        println!("[grid:{grid}::chunk{}] brightness exceeds 400, forcing down..", *index);
+                    }
+                    s.set_prop("Radius", BrdbValue::F32(s_radius));
+                    s.set_prop("Brightness", BrdbValue::F32(s_brightness));
+
+                    let s_cast_shadows = s.prop("bCastShadows")?.as_brdb_bool()?;
+                    if s_cast_shadows {
+                        println!("[grid:{grid}::chunk{}] disabling cast shadows..", *index);
+                        s.set_prop("bCastShadows", BrdbValue::Bool(false))?;
+                    }
 
                     num_grid_modified += 1;
                     num_chunk_modified += 1;
@@ -144,7 +166,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         if num_grid_modified > 0 {
             println!(
-                "grid {grid} had {num_grid_modified} shadow-casting components disabled"
+                "[grid{grid}] {num_grid_modified} lights optimized"
             );
             grids_files.push((
                 grid.to_string(),
@@ -155,6 +177,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ));
         }
     }
+
+    println!("---SEP---");
 
     let shadows_patch = BrPendingFs::Root(vec![(
         "World".to_owned(),
