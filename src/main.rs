@@ -82,7 +82,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut grid_ids = vec![1];
     let mut entity_chunk_files = vec![];
-    let mut component_chunk_files = vec![];
     let mut grids_files = vec![];
     let mut num_grid_modified = 0;
 
@@ -107,6 +106,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Iterate all grids (there can be bricks on entities)
     for grid in &grid_ids {
         let chunks = db.brick_chunk_index(*grid)?;
+        let mut component_chunk_files = vec![];
 
         // Iterate all chunks in the grid
         for chunk in chunks {
