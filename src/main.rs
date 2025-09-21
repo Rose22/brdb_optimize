@@ -1,9 +1,9 @@
 /*
  * takes a brdb world file and optimizes it by:
  * - freezing all wheels and spheres
- * - freezing all physics grids that contain an engine (so basically, a vehicle)
+ * - TODO: freezing all physics grids that contain an engine (so basically, a vehicle)
  * - disabling castshadows on all lights everywhere
- * - stripping revisions to only the last 1000 (keeps filesize small)
+ * - TODO: stripping revisions to only the last 1000 (keeps filesize small)
  */
 
 use std::{
