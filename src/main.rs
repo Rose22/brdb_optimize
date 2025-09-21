@@ -1,3 +1,11 @@
+/*
+ * takes a brdb world file and optimizes it by:
+ * - freezing all wheels and spheres
+ * - freezing all physics grids that contain an engine (so basically, a vehicle)
+ * - disabling castshadows on all lights everywhere
+ * - stripping revisions to only the last 1000 (keeps filesize small)
+ */
+
 use std::{
     env,
     process,
@@ -29,8 +37,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let component_schema = db.components_schema()?;
 
     // ------------------
-    // Freeze all wheels
+    // Freeze all entities that are known to cause lag
     // ------------------
+    println!("freezing entities..");
+
     let mut entity_chunk_files = vec![];
     for index in db.entity_chunk_index()? {
         let entities = db.entity_chunk(index)?;
@@ -42,7 +52,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 e.frozen = true;
                 println!("freezing entity {} of type {ent_type}", e.id.unwrap());
             } else {
-                println!("skipped freezing entity {} of type {ent_type}", e.id.unwrap());
+                // println!("skipped freezing entity {} of type {ent_type}", e.id.unwrap());
             }
 
             soa.add_entity(&global_data, &e, e.id.unwrap() as u32);
@@ -71,6 +81,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ------------------
     // Disable shadows
     // ------------------
+    println!("disabling cast shadow property across all lights..");
     let mut grid_ids = vec![1];
 
     // Collect dynamic brick grid IDs
@@ -119,24 +130,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     num_chunk_modified += 1;
                 }
 
-                // if the light has an assigned color, make sure that is written correctly
-                /*
-                 * need to find a way to get the component name so we can check if it's a light
-                 * this code wont compile
-                if s.0.as_ref().starts_with("
-                    .is_ok_and(|v| v.as_brdb_bool().unwrap_or_default())
-                    == false
-                {
-                    println!("custom color found!");
-                    let color = s.prop("Color")?;
-                    let color_R = color.prop("R")?.as_brdb_u8()?;
-                    let color_G = color.prop("G")?.as_brdb_u8()?;
-                    let color_B = color.prop("B")?.as_brdb_u8()?;
-                    println!("R:{color_R} G:{color_G} B:{color_B}"); 
-
-                }
-                */
-
                 soa.unwritten_struct_data.push(Box::new(s));
             }
 
@@ -175,6 +168,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             )])),
         )])),
     )]);
+
+    println!("stripping revisions..");
+
+    // db.conn.execute(
 
     println!();
     println!("writing to world file..");
