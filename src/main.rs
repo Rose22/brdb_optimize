@@ -52,8 +52,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         for mut e in entities.into_iter() {
             let ent_type = e.data.get_schema_struct().unwrap().0;
             if ent_type.starts_with("Entity_Wheel") || ent_type.starts_with("Entity_Ball") {
-                e.frozen = true;
-                println!("[ENTITY] freezing entity {} of type {ent_type}..", e.id.unwrap());
+                if !e.frozen {
+                    e.frozen = true;
+                    println!("[entity:{}] freezing {ent_type}..", e.id.unwrap());
+                }
             }
 
             soa.add_entity(&global_data, &e, e.id.unwrap() as u32);
@@ -127,30 +129,40 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     );
                     */
 
+                    let mut modified: bool = false;
+
                     // force light radius down to 500
                     let mut s_radius = s.prop("Radius")?.as_brdb_f32()?;
                     if s_radius > 5000.0 {
                         // for some reason the game stores radiuses as thousands..
+                        println!("[grid:{grid}] light radius exceeds 500, forcing down..");
                         s_radius = 5000.0;
-                        println!("[grid:{grid}::chunk{}] radius exceeds 500, forcing down..", *index);
+                        s.set_prop("Radius", BrdbValue::F32(s_radius));
+
+                        modified = true;
                     }
                     // force light brightness down to 500
                     let mut s_brightness = s.prop("Brightness")?.as_brdb_f32()?;
                     if s_brightness > 400.0 {
+                        println!("[grid:{grid}] light brightness exceeds 400, forcing down..");
                         s_brightness = 400.0;
-                        println!("[grid:{grid}::chunk{}] brightness exceeds 400, forcing down..", *index);
+                        s.set_prop("Brightness", BrdbValue::F32(s_brightness));
+
+                        modified = true;
                     }
-                    s.set_prop("Radius", BrdbValue::F32(s_radius));
-                    s.set_prop("Brightness", BrdbValue::F32(s_brightness));
 
                     let s_cast_shadows = s.prop("bCastShadows")?.as_brdb_bool()?;
                     if s_cast_shadows {
-                        println!("[grid:{grid}::chunk{}] disabling cast shadows..", *index);
+                        println!("[grid:{grid}] disabling cast shadows..");
                         s.set_prop("bCastShadows", BrdbValue::Bool(false))?;
+
+                        modified = true;
                     }
 
-                    num_grid_modified += 1;
-                    num_chunk_modified += 1;
+                    if modified {
+                        num_grid_modified += 1;
+                        num_chunk_modified += 1;
+                    }
                 }
 
                 soa.unwritten_struct_data.push(Box::new(s));
@@ -166,7 +178,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         if num_grid_modified > 0 {
             println!(
-                "[grid{grid}] {num_grid_modified} lights optimized"
+                "[grid:{grid}] {num_grid_modified} lights optimized"
             );
             grids_files.push((
                 grid.to_string(),
