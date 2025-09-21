@@ -3,7 +3,8 @@
  * - freezing all wheels and spheres
  * - TODO: freezing all physics grids that contain an engine (so basically, a vehicle)
  * - disabling castshadows on all lights everywhere
- * - TODO: stripping revisions to only the last 1000 (keeps filesize small)
+ * - TODO: stripping revisions to only the last 600 (keeps filesize small)
+ *     (600 revisions = roughly 2 days assuming 5 minute autosave interval)
  */
 
 use std::{
