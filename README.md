@@ -25,7 +25,8 @@ pub fn write_u8(buf: &mut impl Write, value: u64) -> Result<(), BrdbSchemaError>
 }
 ```
 
-to run the tool, run this:
+to run the tool, first ensure you have rust installed. 
+then run this:
 ```
 git clone https://github.com/Rose22/brdb_optimize.git
 cargo run ~/path/to/your/world.brdb
