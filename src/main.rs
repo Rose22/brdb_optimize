@@ -111,9 +111,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     );
                     */
                     s.set_prop("bCastShadows", BrdbValue::Bool(false))?;
+
                     num_grid_modified += 1;
                     num_chunk_modified += 1;
                 }
+
+                // if the light has an assigned color, make sure that is written correctly
+                /*
+                 * need to find a way to get the component name so we can check if it's a light
+                 * this code wont compile
+                if s.0.as_ref().starts_with("
+                    .is_ok_and(|v| v.as_brdb_bool().unwrap_or_default())
+                    == false
+                {
+                    println!("custom color found!");
+                    let color = s.prop("Color")?;
+                    let color_R = color.prop("R")?.as_brdb_u8()?;
+                    let color_G = color.prop("G")?.as_brdb_u8()?;
+                    let color_B = color.prop("B")?.as_brdb_u8()?;
+                    println!("R:{color_R} G:{color_G} B:{color_B}"); 
+
+                }
+                */
 
                 soa.unwritten_struct_data.push(Box::new(s));
             }
