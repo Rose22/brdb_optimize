@@ -1,11 +1,13 @@
 /*
  * takes a brdb world file and optimizes it by:
  * - freezing all wheels and spheres
+ * - TODO: freezing all entities not attached to any kind of joint (bearing/slider)
  * - TODO: freezing all physics grids that contain an engine (so basically, a vehicle)
  * - disabling castshadows on all lights everywhere
+ * - forcing radius and brightness of all lights down to a reasonable limit
  * - TODO: stripping revisions to only the last 600 (keeps filesize small)
  *     (600 revisions = roughly 2 days assuming 5 minute autosave interval)
- * - forces radius and brightness of all lights down to a reasonable limit
+ * - TODO: delete stray weight components on the main grid
  */
 
 use std::{
@@ -14,7 +16,7 @@ use std::{
     path::PathBuf
 };
 use brdb::{
-    AsBrdbValue, Brdb, EntityChunkSoA, IntoReader, pending::BrPendingFs, schema::BrdbValue,
+    AsBrdbValue, Brdb, BrdbComponent, EntityChunkSoA, IntoReader, pending::BrPendingFs, schema::BrdbValue,
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -38,6 +40,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let entity_schema = db.entities_schema()?;
     let component_schema = db.components_schema()?;
 
+    let mut num_entities_modified: u32 = 0;
+    let mut num_components_modified: u32 = 0;
+
     // ------------------
     // Freeze all entities that are known to cause lag
     // ------------------
@@ -51,11 +56,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut soa = EntityChunkSoA::default();
         for mut e in entities.into_iter() {
             let ent_type = e.data.get_schema_struct().unwrap().0;
+
             if ent_type.starts_with("Entity_Wheel") || ent_type.starts_with("Entity_Ball") {
                 if !e.frozen {
-                    e.frozen = true;
                     println!("[entity:{}] freezing {ent_type}..", e.id.unwrap());
+                    e.frozen = true;
+                    num_entities_modified += 1;
                 }
+            } else {
+                /*
+                // unfreeze all entities
+                println!("[entity:{}] unfreezing {ent_type}", e.id.unwrap());
+                e.frozen = false;
+                */
             }
 
             soa.add_entity(&global_data, &e, e.id.unwrap() as u32);
@@ -82,20 +95,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )]);
 
     // ------------------
-    // Optimize all lights
+    // Optimize components
     // ------------------
     println!("---SEP---");
-    println!("optimizing lights..");
+    println!("optimizing components..");
     let mut grid_ids = vec![1];
 
     // Collect dynamic brick grid IDs
-    for index in db.entity_chunk_index()? {
-        for e in db.entity_chunk(index)? {
-            if e.data
+    for chunk in db.entity_chunk_index()? {
+        for entity in db.entity_chunk(chunk)? {
+            if entity.data
                 .get_schema_struct()
                 .is_some_and(|s| s.0.as_ref() == "Entity_DynamicBrickGrid")
             {
-                if let Some(id) = e.id {
+                if let Some(id) = entity.id {
                     grid_ids.push(id);
                 }
             }
@@ -109,52 +122,73 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut chunk_files = vec![];
         let mut num_grid_modified = 0;
 
-        for index in chunks {
-            if index.num_components == 0 {
+        for chunk in chunks {
+            let mut num_chunk_modified = 0;
+
+            if chunk.num_components == 0 {
                 continue;
             }
 
-            let (mut soa, components) = db.component_chunk(*grid, *index)?;
-            let mut num_chunk_modified = 0;
+            let (mut soa, components) = db.component_chunk(*grid, *chunk)?;
 
-            for mut s in components {
-                // if it is a light
-                if s.prop("bCastShadows").is_ok()
+            for mut component in components {
+                let component_name = String::from(component.get_name());
+
+                /*
+                if *grid == 1 {
+                    // main grid
+                    if component_name == "BrickComponentData_WeightBrick" {
+                        // neutralize weight components on the main grid
+                        if component.prop("Mass")?.as_brdb_f32()? > 0.0 {
+                            println!("[grid:{grid}] weight: disabling..");
+                            component.set_prop("Mass", BrdbValue::F32(0.0));
+
+                            modified = true;
+                            num_components_modified += 1;
+                        }
+                    }
+                }
+                */
+
+                //if component.prop("bCastShadows").is_ok()
+                if
+                    component_name == "BrickComponentData_PointLight"
+                    ||
+                    component_name == "BrickComponentData_SpotLight"
                 {
+                    // light component
+                    let mut modified: bool = false;
+
                     /*
                     println!(
                         "grid {grid} chunk {} mutating component {}",
-                        *index,
-                        s.get_name()
+                        *chunk,
+                        component.get_name()
                     );
                     */
 
-                    let mut modified: bool = false;
-
                     // force light radius down to 500
-                    let mut s_radius = s.prop("Radius")?.as_brdb_f32()?;
-                    if s_radius > 5000.0 {
+                    let component_radius = component.prop("Radius")?.as_brdb_f32()?;
+                    if component_radius > 5000.0 {
                         // for some reason the game stores radiuses as thousands..
-                        println!("[grid:{grid}] light radius exceeds 500, forcing down..");
-                        s_radius = 5000.0;
-                        s.set_prop("Radius", BrdbValue::F32(s_radius));
+                        println!("[grid:{grid}] light: radius exceeds 500, forcing down..");
+                        component.set_prop("Radius", BrdbValue::F32(5000.0));
 
                         modified = true;
                     }
                     // force light brightness down to 500
-                    let mut s_brightness = s.prop("Brightness")?.as_brdb_f32()?;
-                    if s_brightness > 400.0 {
-                        println!("[grid:{grid}] light brightness exceeds 400, forcing down..");
-                        s_brightness = 400.0;
-                        s.set_prop("Brightness", BrdbValue::F32(s_brightness));
+                    let component_brightness = component.prop("Brightness")?.as_brdb_f32()?;
+                    if component_brightness > 400.0 {
+                        println!("[grid:{grid}] light: brightness exceeds 400, forcing down..");
+                        component.set_prop("Brightness", BrdbValue::F32(400.0));
 
                         modified = true;
                     }
 
-                    let s_cast_shadows = s.prop("bCastShadows")?.as_brdb_bool()?;
-                    if s_cast_shadows {
-                        println!("[grid:{grid}] disabling cast shadows..");
-                        s.set_prop("bCastShadows", BrdbValue::Bool(false))?;
+                    let component_cast_shadows = component.prop("bCastShadows")?.as_brdb_bool()?;
+                    if component_cast_shadows {
+                        println!("[grid:{grid}] light: disabling cast shadows..");
+                        component.set_prop("bCastShadows", BrdbValue::Bool(false))?;
 
                         modified = true;
                     }
@@ -162,15 +196,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if modified {
                         num_grid_modified += 1;
                         num_chunk_modified += 1;
+                        num_components_modified += 1;
                     }
                 }
 
-                soa.unwritten_struct_data.push(Box::new(s));
+                soa.unwritten_struct_data.push(Box::new(component));
             }
 
             if num_chunk_modified > 0 {
                 chunk_files.push((
-                    format!("{}.mps", *index),
+                    format!("{}.mps", *chunk),
                     BrPendingFs::File(Some(soa.to_bytes(&component_schema)?)),
                 ));
             }
@@ -178,7 +213,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         if num_grid_modified > 0 {
             println!(
-                "[grid:{grid}] {num_grid_modified} lights optimized"
+                "[grid:{grid}] {num_grid_modified} components optimized"
             );
             grids_files.push((
                 grid.to_string(),
@@ -206,11 +241,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )])),
     )]);
 
-    println!("stripping revisions..");
 
-    // db.conn.execute(
+    /* 
+    println!("stripping revisions..");
+    db.conn.execute(
+    */
 
     println!();
+    println!("optimized {num_entities_modified} entities and {num_components_modified} components!");
     println!("writing to world file..");
 
     // ------------------
@@ -226,7 +264,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     Brdb::new(&dst)?.write_pending("Optimize World", pending)?;
 
-    println!("World optimized and written to {:?}", dst);
+    println!("world written to {:?}", dst);
 
     Ok(())
 }
