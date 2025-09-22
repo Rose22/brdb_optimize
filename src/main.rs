@@ -7,7 +7,7 @@
  * - forcing radius and brightness of all lights down to a reasonable limit
  * - TODO: stripping revisions to only the last 600 (keeps filesize small)
  *     (600 revisions = roughly 2 days assuming 5 minute autosave interval)
- * - TODO: delete stray weight components on the main grid
+ * - neutralize stray weight components on the main grid
  */
 
 use std::{
@@ -42,6 +42,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut num_entities_modified: u32 = 0;
     let mut num_components_modified: u32 = 0;
+    let mut corrupted: bool = false;
 
     // ------------------
     // Freeze all entities that are known to cause lag
@@ -129,18 +130,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 continue;
             }
 
-            let (mut soa, components) = db.component_chunk(*grid, *chunk)?;
+            // skip corrupt chunks
+            let (mut soa, components) = match db.component_chunk(*grid, *chunk) {
+                Ok(value) => value,
+                Err(e) => {
+                    println!("[grid:{grid}][{}] found corrupt chunk! corruption: {e}", *chunk);
+                    // if a corrupt chunk was found, dont risk saving the database
+                    corrupted = true;
+                    continue
+                }
+            };
 
             for mut component in components {
                 let component_name = String::from(component.get_name());
+                let mut modified: bool = false;
 
-                /*
                 if *grid == 1 {
                     // main grid
                     if component_name == "BrickComponentData_WeightBrick" {
                         // neutralize weight components on the main grid
                         if component.prop("Mass")?.as_brdb_f32()? > 0.0 {
-                            println!("[grid:{grid}] weight: disabling..");
+                            println!("[grid:{grid}][{}] weight: disabling..", *chunk);
                             component.set_prop("Mass", BrdbValue::F32(0.0));
 
                             modified = true;
@@ -148,30 +158,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                 }
+
+                /*
+                if component.prop("bAnglesArePercentages").is_ok() {
+                    component.set_prop("bAnglesArePercentages", BrdbValue::Bool(false));
+                }
                 */
 
-                //if component.prop("bCastShadows").is_ok()
                 if
                     component_name == "BrickComponentData_PointLight"
                     ||
                     component_name == "BrickComponentData_SpotLight"
                 {
                     // light component
-                    let mut modified: bool = false;
-
-                    /*
-                    println!(
-                        "grid {grid} chunk {} mutating component {}",
-                        *chunk,
-                        component.get_name()
-                    );
-                    */
 
                     // force light radius down to 500
                     let component_radius = component.prop("Radius")?.as_brdb_f32()?;
                     if component_radius > 5000.0 {
                         // for some reason the game stores radiuses as thousands..
-                        println!("[grid:{grid}] light: radius exceeds 500, forcing down..");
+                        println!("[grid:{grid}][{}] light: radius exceeds 500, forcing down..", *chunk);
                         component.set_prop("Radius", BrdbValue::F32(5000.0));
 
                         modified = true;
@@ -179,25 +184,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     // force light brightness down to 500
                     let component_brightness = component.prop("Brightness")?.as_brdb_f32()?;
                     if component_brightness > 400.0 {
-                        println!("[grid:{grid}] light: brightness exceeds 400, forcing down..");
+                        println!("[grid:{grid}][{}] light: brightness exceeds 400, forcing down..", *chunk);
                         component.set_prop("Brightness", BrdbValue::F32(400.0));
 
                         modified = true;
                     }
 
+                    // force cast shadows to off
                     let component_cast_shadows = component.prop("bCastShadows")?.as_brdb_bool()?;
                     if component_cast_shadows {
-                        println!("[grid:{grid}] light: disabling cast shadows..");
+                        println!("[grid:{grid}][{}] light: disabling cast shadows..", *chunk);
                         component.set_prop("bCastShadows", BrdbValue::Bool(false))?;
 
                         modified = true;
                     }
 
-                    if modified {
-                        num_grid_modified += 1;
-                        num_chunk_modified += 1;
-                        num_components_modified += 1;
-                    }
+                }
+
+                if modified {
+                    num_grid_modified += 1;
+                    num_chunk_modified += 1;
+                    num_components_modified += 1;
                 }
 
                 soa.unwritten_struct_data.push(Box::new(component));
@@ -227,6 +234,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("---SEP---");
 
+    if corrupted {
+        println!("[ERROR] corruptions found! please read back through the log to see what went wrong.");
+        println!("for safety, the world file was not written.");
+        process::exit(1);
+    }
+
     let shadows_patch = BrPendingFs::Root(vec![(
         "World".to_owned(),
         BrPendingFs::Folder(Some(vec![(
@@ -240,7 +253,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             )])),
         )])),
     )]);
-
 
     /* 
     println!("stripping revisions..");
