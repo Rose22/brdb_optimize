@@ -150,11 +150,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     if component_name == "BrickComponentData_WeightBrick" {
                         // neutralize weight components on the main grid
+                        let mut weight_modified: bool = false;
+
+                        let weight_size = component.prop_mut("MassSize")?;
+                        if weight_size.prop("X")?.as_brdb_i32()? > 0 {
+                            weight_size.set_prop("X", BrdbValue::I32(0));
+                            weight_modified = true;
+                        }
+                        if weight_size.prop("Y")?.as_brdb_i32()? > 0 {
+                            weight_size.set_prop("Y", BrdbValue::I32(0));
+                            weight_modified = true;
+                        }
+                        if weight_size.prop("Z")?.as_brdb_i32()? > 0 {
+                            weight_size.set_prop("Z", BrdbValue::I32(0));
+                            weight_modified = true;
+                        }
+
                         let weight = component.prop("Mass")?.as_brdb_f32()?;
                         if weight > 0.0 {
-                            println!("[grid:{grid}][{}] weight: was {weight}, neutralizing..", *chunk);
                             component.set_prop("Mass", BrdbValue::F32(0.0));
+                            weight_modified = true;
+                        }
 
+                        if weight_modified {
+                            println!("[grid:{grid}][{}] weight neutralized", *chunk);
                             modified = true;
                             num_components_modified += 1;
                         }
@@ -163,7 +182,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         // neutralize wheel engine weight components on the main grid
                         let weight = component.prop("CustomMass")?.as_brdb_f32()?;
                         if weight > 0.0 {
-                            println!("[grid:{grid}][{}] engine weight: was {weight}, neutralizing..", *chunk);
+                            println!("[grid:{grid}][{}] engine weight: was {weight}, neutralized", *chunk);
                             component.set_prop("CustomMass", BrdbValue::F32(0.0));
 
                             modified = true;
