@@ -1,7 +1,8 @@
 optimizes a brickadia world file by:
 
 - freezing all wheels and spheres around the world
-- forcing all lights' cast shadows setting to off and forcing radius and brightness down to reasonable limitse
+- forcing all lights' cast shadows setting to off and forcing radius and brightness down to reasonable limits
+- zeroing out all weight components attached to the main grid (meaning, not in a physics grid), including wheel engines
 - getting rid of excess revisions (makes a huge difference in file size)
     - WARNING: right now it gets rid of ALL revisions, so be sure to make a backup before using this!
 
