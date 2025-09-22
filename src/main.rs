@@ -147,14 +147,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 if *grid == 1 {
                     // main grid
+
                     if component_name == "BrickComponentData_WeightBrick" {
                         // neutralize weight components on the main grid
-                        if component.prop("Mass")?.as_brdb_f32()? > 0.0 {
-                            println!("[grid:{grid}][{}] weight: disabling..", *chunk);
+                        let weight = component.prop("Mass")?.as_brdb_f32()?;
+                        if weight > 0.0 {
+                            println!("[grid:{grid}][{}] weight: was {weight}, neutralizing..", *chunk);
                             component.set_prop("Mass", BrdbValue::F32(0.0));
 
                             modified = true;
                             num_components_modified += 1;
+                        }
+                    }
+                    if component_name == "BrickComponentData_WheelEngine" {
+                        // neutralize wheel engine weight components on the main grid
+                        let weight = component.prop("CustomMass")?.as_brdb_f32()?;
+                        if weight > 0.0 {
+                            println!("[grid:{grid}][{}] engine weight: was {weight}, neutralizing..", *chunk);
+                            component.set_prop("CustomMass", BrdbValue::F32(0.0));
+
+                            modified = true;
                         }
                     }
                 }
