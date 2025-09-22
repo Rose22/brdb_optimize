@@ -20,6 +20,15 @@ use brdb::{
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /*
+     * essential to know in understanding this program,
+     * is that it takes a brdb world file and doesn't just modify the existing one,
+     * but creates a brand new copy,
+     * which involves copying every single thing over into the new file
+     * while modifying anything that we want to change
+     */
+
+    // get cmdline arguments
     let args: Vec<String> = env::args().skip(1).take(1).collect();
     
     if args.is_empty() {
@@ -27,13 +36,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         process::exit(1);
     }
 
-    println!("Reading file {:?}", args[0]);
+    // set up paths
     let src = PathBuf::from(&args[0]);
     let stem = src.file_stem().unwrap().to_string_lossy();
     let mut dst = src.with_file_name(format!("{stem}.optimized.brdb"));
 
     assert!(src.exists());
 
+    // read brdb database and initialize variables
+    println!("Reading file {:?}", args[0]);
     let db = Brdb::open(src)?.into_reader();
 
     let global_data = db.global_data()?;
@@ -50,18 +61,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("---SEP---");
     println!("freezing entities..");
 
+    // loop through all entity chunks
     let mut entity_chunk_files = vec![];
-    for index in db.entity_chunk_index()? {
-        let entities = db.entity_chunk(index)?;
+    for chunk in db.entity_chunk_index()? {
+        let entities = db.entity_chunk(chunk)?;
 
+        /*
+         * create a new entity chunk SoA (StructureOfArrays),
+         * that we store our new entities in.
+         *
+         * SoA is defined in zeblote's msgpack-schema format:
+         * https://gist.github.com/Zeblote/0fc682b9df1a3e82942b613ab70d8a04
+         *
+         * it's the way brdb files store this information
+         */
         let mut soa = EntityChunkSoA::default();
-        for mut e in entities.into_iter() {
-            let ent_type = e.data.get_schema_struct().unwrap().0;
+        for mut entity in entities.into_iter() {
+            // get the type of the entity as a string (basically its name)
+            let ent_type = entity.data.get_schema_struct().unwrap().0;
 
+            // if it's a wheel or a ball/sphere,
             if ent_type.starts_with("Entity_Wheel") || ent_type.starts_with("Entity_Ball") {
-                if !e.frozen {
-                    println!("[entity:{}] freezing {ent_type}..", e.id.unwrap());
-                    e.frozen = true;
+                // if this entity isn't frozen yet
+                if !entity.frozen {
+                    // then freeze it
+                    println!("[entity:{}] freezing {ent_type}..", entity.id.unwrap());
+                    entity.frozen = true;
                     num_entities_modified += 1;
                 }
             } else {
@@ -72,16 +97,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 */
             }
 
-            soa.add_entity(&global_data, &e, e.id.unwrap() as u32);
+            // add a new entity to our SoA
+            soa.add_entity(&global_data, &entity, entity.id.unwrap() as u32);
         }
 
+        // convert our entity SoA into a brdb .mps file that will be written to the brdb later
+        // this contains the values for the properties of all the entities
         entity_chunk_files.push((
-            format!("{index}.mps"),
+            format!("{chunk}.mps"),
             BrPendingFs::File(Some(soa.to_bytes(&entity_schema)?)),
         ));
     }
 
-    let wheels_patch = BrPendingFs::Root(vec![(
+    /*
+     * write all the entity chunk files we created
+     * into the brdb file, as a new revision (patch)
+     */
+    let entities_patch = BrPendingFs::Root(vec![(
         "World".to_owned(),
         BrPendingFs::Folder(Some(vec![(
             "0".to_string(),
@@ -100,9 +132,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ------------------
     println!("---SEP---");
     println!("optimizing components..");
-    let mut grid_ids = vec![1];
 
-    // Collect dynamic brick grid IDs
+    // Collect all brick grid ID's (main grid + all dynamic/physics grids)
+    let mut grid_ids = vec![1]; // we start out with grid id 1 (main grid) already inside
     for chunk in db.entity_chunk_index()? {
         for entity in db.entity_chunk(chunk)? {
             if entity.data
@@ -116,24 +148,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    let mut grids_files = vec![];
+    /*
+     * this will contain a modified copy
+     * of all brick grids
+     */
+    let mut brick_grids_folder = vec![];
 
+    // loop through all grids
     for grid in &grid_ids {
+        // get all chunks in the grid
         let chunks = db.brick_chunk_index(*grid)?;
         let mut chunk_files = vec![];
         let mut num_grid_modified = 0;
 
+        // loop through all chunks in this grid
         for chunk in chunks {
-            let mut num_chunk_modified = 0;
-
+            // skip if there are no components
             if chunk.num_components == 0 {
                 continue;
             }
 
-            // skip corrupt chunks
+            // get component data: the SoA (StructureOfArrays) and the actual components
             let (mut soa, components) = match db.component_chunk(*grid, *chunk) {
                 Ok(value) => value,
                 Err(e) => {
+                    // skip corrupt chunks
+                    
                     println!("[grid:{grid}][{}] found corrupt chunk! corruption: {e}", *chunk);
                     // if a corrupt chunk was found, dont risk saving the database
                     corrupted = true;
@@ -141,17 +181,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
 
+            let mut num_chunk_modified = 0;
+            // loop through components in this chunk
             for mut component in components {
                 let component_name = String::from(component.get_name());
                 let mut modified: bool = false;
 
                 if *grid == 1 {
-                    // main grid
+                    /*
+                     * main grid (grid 1)
+                     * this is the root grid, anything that's not a physics grid or entity
+                     */
 
+                    // if it's a weight component/brick
                     if component_name == "BrickComponentData_WeightBrick" {
-                        // neutralize weight components on the main grid
                         let mut weight_modified: bool = false;
 
+                        // set the mass size to (X:0,Y:0,Z:0)
                         let weight_size = component.prop_mut("MassSize")?;
                         if weight_size.prop("X")?.as_brdb_i32()? > 0 {
                             weight_size.set_prop("X", BrdbValue::I32(0));
@@ -167,7 +213,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
 
                         let weight = component.prop("Mass")?.as_brdb_f32()?;
+                        // if mass is above 0,
                         if weight > 0.0 {
+                            // set it to 0
                             component.set_prop("Mass", BrdbValue::F32(0.0));
                             weight_modified = true;
                         }
@@ -178,11 +226,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             num_components_modified += 1;
                         }
                     }
+                    // if it's a wheel engine component/brick
                     if component_name == "BrickComponentData_WheelEngine" {
-                        // neutralize wheel engine weight components on the main grid
                         let weight = component.prop("CustomMass")?.as_brdb_f32()?;
+
+                        // if weight is above 0,
                         if weight > 0.0 {
-                            println!("[grid:{grid}][{}] engine weight: was {weight}, neutralized", *chunk);
+                            // neutralize the weight (set it to 0)
+                            println!("[grid:{grid}][{}] wheel engine weight neutralized", *chunk);
                             component.set_prop("CustomMass", BrdbValue::F32(0.0));
 
                             modified = true;
@@ -196,23 +247,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 */
 
+                // if it's any type of light,
                 if
                     component_name == "BrickComponentData_PointLight"
                     ||
                     component_name == "BrickComponentData_SpotLight"
                 {
-                    // light component
-
-                    // force light radius down to 500
+                    // limit light radius to 500 or below
                     let component_radius = component.prop("Radius")?.as_brdb_f32()?;
                     if component_radius > 5000.0 {
-                        // for some reason the game stores radiuses as thousands..
                         println!("[grid:{grid}][{}] light: radius exceeds 500, forcing down..", *chunk);
+
+                        // for some reason the game stores radiuses as thousands..
                         component.set_prop("Radius", BrdbValue::F32(5000.0));
 
                         modified = true;
                     }
-                    // force light brightness down to 500
+                    // limit light brightness to 400 or below
                     let component_brightness = component.prop("Brightness")?.as_brdb_f32()?;
                     if component_brightness > 400.0 {
                         println!("[grid:{grid}][{}] light: brightness exceeds 400, forcing down..", *chunk);
@@ -229,7 +280,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                         modified = true;
                     }
-
                 }
 
                 if modified {
@@ -238,10 +288,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     num_components_modified += 1;
                 }
 
+                /*
+                 * add the component to the current chunk's component StructureOfArrays
+                 * IMPORTANT: regardless of if we modified it!
+                 * because we're copying ALL components into the new file
+                 */
                 soa.unwritten_struct_data.push(Box::new(component));
             }
 
             if num_chunk_modified > 0 {
+                /*
+                 * now take the new chunk's SoA
+                 * and convert it to an .mps file
+                 * and add it to the vector array of files
+                 * that we will write to the correct folder later
+                 *
+                 * example vector array:
+                 *  - -1_-1_-1.mps
+                 *  - 0_0_0.mps
+                 * eventually becomes, in the filesystem:
+                 *  - /World/0/Bricks/Grids/1/Components/-1_-1_-1.mps
+                 *  - /World/0/Bricks/Grids/1/Components/0_0_0.mps
+                 */
                 chunk_files.push((
                     format!("{}.mps", *chunk),
                     BrPendingFs::File(Some(soa.to_bytes(&component_schema)?)),
@@ -253,7 +321,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!(
                 "[grid:{grid}] {num_grid_modified} components optimized"
             );
-            grids_files.push((
+
+            /* 
+             * now create a folder for the loop's current brick grid,
+             * such as /World/0/Bricks/Grids/1/
+             * then create a folder called Components inside it,
+             * and insert all the chunk mps files we created earlier.
+             * example:
+             *  - /World/0/Bricks/Grids/
+             *      - 1/ (this is the level we're currently working with)
+             *          - Components/
+             *              - -1_-1_-1.mps
+             *              - 0_0_0.mps
+             */
+            brick_grids_folder.push((
                 grid.to_string(),
                 BrPendingFs::Folder(Some(vec![(
                     "Components".to_string(),
@@ -271,7 +352,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         process::exit(1);
     }
 
-    let shadows_patch = BrPendingFs::Root(vec![(
+    /*
+     * create a revision (patch) out of all the
+     * component data we gathered earlier
+     */
+    let components_patch = BrPendingFs::Root(vec![(
         "World".to_owned(),
         BrPendingFs::Folder(Some(vec![(
             "0".to_string(),
@@ -279,7 +364,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "Bricks".to_string(),
                 BrPendingFs::Folder(Some(vec![(
                     "Grids".to_string(),
-                    BrPendingFs::Folder(Some(grids_files)),
+                    BrPendingFs::Folder(Some(brick_grids_folder)),
                 )])),
             )])),
         )])),
@@ -295,12 +380,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("writing to world file..");
 
     // ------------------
-    // Write combined patch
+    // Write combined patch as a new revision
     // ------------------
     let pending = db
         .to_pending()?
-        .with_patch(wheels_patch)?
-        .with_patch(shadows_patch)?;
+        .with_patch(entities_patch)?
+        .with_patch(components_patch)?;
 
     if dst.exists() {
         std::fs::remove_file(&dst)?;
