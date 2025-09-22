@@ -10,6 +10,7 @@ to run the tool, first ensure you have rust installed.
 then run this:
 ```
 git clone https://github.com/Rose22/brdb_optimize.git
+cd brdb_optimize
 cargo run ~/path/to/your/world.brdb
 ```
 
